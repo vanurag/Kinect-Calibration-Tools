@@ -24,27 +24,44 @@ class ImageConverter
   image_transport::ImageTransport it_;
   image_transport::Subscriber image_sub_;
   image_transport::Publisher image_pub_;
-  int minIr_, maxIr_;
+  float minIr_, maxIr_;
   std::vector<std::pair<double, double>> last_mean_std_8bit;
   double lower_scaling_factor = 0.99; 
   double upper_scaling_factor = 0.99;
   cv::Ptr<cv::CLAHE> clahe_;
 
-  void findMinMax(const cv::Mat &ir)
+  void findMinMax(const cv::Mat_<uint16_t> &ir)
   {
-    minIr_ = 0xFFFF;
-    maxIr_ = 0;
+    minIr_ = (float)0xFFFF;
+    maxIr_ = 0.0;
     for(size_t r = 0; r < (size_t)ir.rows; ++r)
     {
       const uint16_t *it = ir.ptr<uint16_t>(r);
 
       for(size_t c = 0; c < (size_t)ir.cols; ++c, ++it)
       {
-        minIr_ = std::min(minIr_, (int) * it);
-        maxIr_ = std::max(maxIr_, (int) * it);
+        minIr_ = std::min(minIr_, (float) * it);
+        maxIr_ = std::max(maxIr_, (float) * it);
       }
     }
     //ROS_INFO("in: %d %d\n", minIr_, maxIr_); 
+  }
+
+  void findMinMax(const cv::Mat_<float> &ir)
+  {
+    minIr_ = std::numeric_limits<float>::max();
+    maxIr_ = 0.0;
+    for(size_t r = 0; r < (size_t)ir.rows; ++r)
+    {
+      const float *it = ir.ptr<float>(r);
+
+      for(size_t c = 0; c < (size_t)ir.cols; ++c, ++it)
+      {
+        minIr_ = std::min(minIr_, (float) * it);
+        maxIr_ = std::max(maxIr_, (float) * it);
+      }
+    }
+    //ROS_INFO("in: %d %d\n", minIr_, maxIr_);
   }
 
   // Conversion from power (FLIR data) to Temperature (in Kelvin)
@@ -71,7 +88,7 @@ class ImageConverter
   }
 
   //adaptive method with changing thresholds
-  void convertTo8bit(const cv::Mat& image, cv::Mat& image_8bit,
+  void convertTo8bit(const cv::Mat_<uint16_t>& image, cv::Mat& image_8bit,
                      bool update_mean_std, bool power_to_kelvin) {
 
     int number_of_last_frames = 2;
@@ -149,7 +166,84 @@ class ImageConverter
     // clahe_->apply(image_8bit, image_8bit);
   }
 
-  void convertIr(const cv::Mat &ir, cv::Mat &grey) {
+
+  //adaptive method with changing thresholds
+  void convertTo8bit(const cv::Mat_<float>& image, cv::Mat& image_8bit,
+                     bool update_mean_std, bool power_to_kelvin) {
+
+    int number_of_last_frames = 2;
+
+    image_8bit.create(image.rows, image.cols, CV_8UC1);
+    unsigned char* image_8bit_pointer = (unsigned char*)(image_8bit.data);
+
+    // power to kelvin
+    cv::Mat kelvin = image;
+    float* kelvin_pointer = (float*)(kelvin.data);
+
+    int vector_size = last_mean_std_8bit.size();
+    if (update_mean_std) {
+      cv::Scalar scalar_mean;
+      cv::Scalar scalar_deviation;
+      cv::meanStdDev(kelvin, scalar_mean, scalar_deviation);
+      double deviation = static_cast<double>(scalar_deviation.val[0]);
+      double mean = static_cast<double>(scalar_mean.val[0]);
+
+      if (vector_size > number_of_last_frames) {
+        last_mean_std_8bit.erase(last_mean_std_8bit.begin());
+      }
+      last_mean_std_8bit.push_back(std::make_pair(mean, deviation));
+    }
+    vector_size = last_mean_std_8bit.size();
+
+    // Compute average mean and deviation of last number_of_last_frames frames
+    double average_mean = 0, average_deviation = 0;
+    int frame_id = 0;
+    double norm = 0;
+    for (auto mean_std_pair : last_mean_std_8bit) {
+      double weight = std::exp(-(double) frame_id);
+      average_mean += mean_std_pair.first * weight;
+      average_deviation += mean_std_pair.second * weight;
+      norm += weight;
+      ++frame_id;
+    }
+    average_mean = average_mean / norm;
+    average_deviation = average_deviation / norm;
+
+    // Scaling limits set to quantiles corresponding
+    // to adaptive_threshold_factor_high(low) % confidence.
+    double upper_scaling_limit =
+        average_mean - average_deviation * sqrt(2) *
+                       boost::math::erfc_inv(2*upper_scaling_factor);
+    double lower_scaling_limit =
+        average_mean + average_deviation * sqrt(2) *
+                       boost::math::erfc_inv(2*lower_scaling_factor);
+
+    // Bouding scaling limits between 0 and 2^16 - 1
+    upper_scaling_limit = std::min(upper_scaling_limit, static_cast<double>(pow(2, 16)-1));
+    lower_scaling_limit = std::max(lower_scaling_limit, 0.0);
+
+    //ROS_INFO("16-bit to 8-bit conversion: Scaling pixel values from [ %f - %f] -> [ 0 - 255 ]",
+    //          lower_scaling_limit, upper_scaling_limit);
+    for (int j = 0; j < kelvin.rows; ++j) {
+      for (int i = 0; i < kelvin.cols; ++i) {
+        double temp = kelvin_pointer[kelvin.cols*j + i];
+
+        if (temp > upper_scaling_limit) {
+          temp = upper_scaling_limit;
+        }
+        if (temp < lower_scaling_limit) {
+          temp = lower_scaling_limit;
+        }
+
+        image_8bit_pointer[image_8bit.cols*j + i] = static_cast<uint8_t>(
+            ((temp - lower_scaling_limit) /
+             (upper_scaling_limit - lower_scaling_limit)) * 255);
+      }
+    }
+    // clahe_->apply(image_8bit, image_8bit);
+  }
+
+  void convertIr(const cv::Mat_<uint16_t> &ir, cv::Mat &grey) {
     const float factor = 255.0f / (maxIr_ - minIr_);
     grey.create(ir.rows, ir.cols, CV_8U);
 
@@ -161,7 +255,25 @@ class ImageConverter
 
       for(size_t c = 0; c < (size_t)ir.cols; ++c, ++itI, ++itO)
       {
-        *itO = std::min(std::max(*itI - minIr_, 0) * factor, 255.0f);
+        *itO = std::min(std::max(*itI - (uint16_t)minIr_, 0) * factor, 255.0f);
+      }
+    }
+    clahe_->apply(grey, grey);
+  }
+
+  void convertIr(const cv::Mat_<float> &ir, cv::Mat &grey) {
+    const float factor = 255.0f / (maxIr_ - minIr_);
+    grey.create(ir.rows, ir.cols, CV_8U);
+
+    #pragma omp parallel for
+    for(size_t r = 0; r < (size_t)ir.rows; ++r)
+    {
+      const float *itI = ir.ptr<float>(r);
+      uint8_t *itO = grey.ptr<uint8_t>(r);
+
+      for(size_t c = 0; c < (size_t)ir.cols; ++c, ++itI, ++itO)
+      {
+        *itO = std::min(std::max(*itI - (float)minIr_, (float)0.0) * factor, 255.0f);
       }
     }
     clahe_->apply(grey, grey);
@@ -169,7 +281,7 @@ class ImageConverter
     
 public:
   ImageConverter(std::string input, std::string output)
-    : it_(nh_), minIr_(0), maxIr_(0x7FFF)
+    : it_(nh_), minIr_(0), maxIr_((float)0x7FFF)
   {
     // Subscrive to input video feed and publish output video feed
     image_sub_ = it_.subscribe(input, 1, 
@@ -187,22 +299,47 @@ public:
   void imageCb(const sensor_msgs::ImageConstPtr& msg)
   {
     cv_bridge::CvImagePtr cv_ptr;
-    try
-    {
-      cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
-    }
-    catch (cv_bridge::Exception& e)
-    {
-      ROS_ERROR("cv_bridge exception: %s", e.what());
-      return;
+
+    if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+      try
+      {
+        cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
+      }
+      catch (cv_bridge::Exception& e)
+      {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+      }
+    } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
+      try
+      {
+        cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1);
+      }
+      catch (cv_bridge::Exception& e)
+      {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+      }
+    } else {
+      ROS_ERROR("Only conversion from 16UC1 and 32FC1 are supported at the moment.");
+      exit(1);
     }
 
     // Convert to mono8
     cv::Mat mono8_img;
-    findMinMax(cv_ptr->image);
+    if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+      cv::Mat_<uint16_t> input_image = cv_ptr->image;
+      findMinMax(input_image);
+      convertTo8bit(input_image, mono8_img, true, true);
+    } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
+      cv::Mat_<float> input_image = cv_ptr->image;
+      findMinMax(input_image);
+      convertTo8bit(input_image, mono8_img, true, true);
+    }
+//    findMinMax(input_image);
     //ROS_INFO("%d %d\n", minIr_, maxIr_); 
     //convertIr(cv_ptr->image, mono8_img);
-    convertTo8bit(cv_ptr->image, mono8_img, true, true);
+//    convertTo8bit(input_image, mono8_img, true, true);
     //cv::resize(mono8_img, mono8_img, cv::Size(739, 415));
     // std::cout << "size: " << mono8_img.rows << ", " << mono8_img.cols << std::endl;
     
