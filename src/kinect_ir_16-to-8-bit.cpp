@@ -159,8 +159,8 @@ class ImageConverter
         }
 
         image_8bit_pointer[image_8bit.cols*j + i] = static_cast<uint8_t>(
-            ((temp - lower_scaling_limit) / 
-             (upper_scaling_limit - lower_scaling_limit)) * 255);
+            (((temp - lower_scaling_limit) /
+              (upper_scaling_limit - lower_scaling_limit)) * (255-50)) + 50);
       }
     }
     // clahe_->apply(image_8bit, image_8bit);
@@ -235,9 +235,13 @@ class ImageConverter
           temp = lower_scaling_limit;
         }
 
+//        image_8bit_pointer[image_8bit.cols*j + i] = static_cast<uint8_t>(
+//            (((temp - lower_scaling_limit) /
+//              (upper_scaling_limit - lower_scaling_limit)) * (255-50)) + 50);
+
         image_8bit_pointer[image_8bit.cols*j + i] = static_cast<uint8_t>(
-            ((temp - lower_scaling_limit) /
-             (upper_scaling_limit - lower_scaling_limit)) * 255);
+              (((upper_scaling_limit - temp) /
+                (upper_scaling_limit - lower_scaling_limit)) * (255-50)) + 50);
       }
     }
     // clahe_->apply(image_8bit, image_8bit);
@@ -299,11 +303,14 @@ public:
   void imageCb(const sensor_msgs::ImageConstPtr& msg)
   {
     cv_bridge::CvImagePtr cv_ptr;
+    std::cout << "ennn" << std::endl;
 
     if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
       try
       {
+        std::cout << "ennn1 " << msg->data.size() << " " << msg->height << " " << msg->width << " " << msg->step << std::endl;
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
+        std::cout << "ennn2" << std::endl;
       }
       catch (cv_bridge::Exception& e)
       {
@@ -328,10 +335,12 @@ public:
     // Convert to mono8
     cv::Mat mono8_img;
     if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+      std::cout << "converting 16UC1..." << std::endl;
       cv::Mat_<uint16_t> input_image = cv_ptr->image;
       findMinMax(input_image);
       convertTo8bit(input_image, mono8_img, true, true);
     } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
+      std::cout << "converting 32FC1..." << std::endl;
       cv::Mat_<float> input_image = cv_ptr->image;
       findMinMax(input_image);
       convertTo8bit(input_image, mono8_img, true, true);
@@ -356,6 +365,7 @@ int main(int argc, char** argv)
     ROS_ERROR("Proper Usage: rosrun image_converter converter <input_topic> <output_topic>");
   }
   ros::init(argc, argv, "image_converter");
+  ROS_INFO("Converting and Publishing...");
   ImageConverter ic(argv[1], argv[2]);
   ros::spin();
   return 0;
