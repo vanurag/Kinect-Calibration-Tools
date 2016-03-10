@@ -303,14 +303,11 @@ public:
   void imageCb(const sensor_msgs::ImageConstPtr& msg)
   {
     cv_bridge::CvImagePtr cv_ptr;
-    std::cout << "ennn" << std::endl;
 
     if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
       try
       {
-        std::cout << "ennn1 " << msg->data.size() << " " << msg->height << " " << msg->width << " " << msg->step << std::endl;
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
-        std::cout << "ennn2" << std::endl;
       }
       catch (cv_bridge::Exception& e)
       {
@@ -338,12 +335,12 @@ public:
       std::cout << "converting 16UC1..." << std::endl;
       cv::Mat_<uint16_t> input_image = cv_ptr->image;
       findMinMax(input_image);
-      convertTo8bit(input_image, mono8_img, true, true);
+      convertTo8bit(input_image, mono8_img, true, false);
     } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
       std::cout << "converting 32FC1..." << std::endl;
       cv::Mat_<float> input_image = cv_ptr->image;
       findMinMax(input_image);
-      convertTo8bit(input_image, mono8_img, true, true);
+      convertTo8bit(input_image, mono8_img, true, false);
     }
 //    findMinMax(input_image);
     //ROS_INFO("%d %d\n", minIr_, maxIr_); 
