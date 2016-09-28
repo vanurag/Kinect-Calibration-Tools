@@ -25,6 +25,7 @@ class ImageConverter
   image_transport::Subscriber image_sub_;
   image_transport::Publisher image_pub_;
   float minIr_, maxIr_;
+  bool is_adaptive_;
   std::vector<std::pair<double, double>> last_mean_std_8bit;
   double lower_scaling_factor = 0.99; 
   double upper_scaling_factor = 0.99;
@@ -284,7 +285,7 @@ class ImageConverter
   }
     
 public:
-  ImageConverter(std::string input, std::string output)
+  ImageConverter(std::string input, std::string output, bool is_adaptive)
     : it_(nh_), minIr_(0), maxIr_((float)0x7FFF)
   {
     // Subscrive to input video feed and publish output video feed
@@ -292,6 +293,7 @@ public:
       &ImageConverter::imageCb, this);
     image_pub_ = it_.advertise(output, 1);
 
+    is_adaptive_ = is_adaptive;
     clahe_ = cv::createCLAHE(1.5, cv::Size(32, 32));
   }
 
@@ -303,8 +305,13 @@ public:
   void imageCb(const sensor_msgs::ImageConstPtr& msg)
   {
     cv_bridge::CvImagePtr cv_ptr;
+    // Convert to mono8
+    sensor_msgs::ImagePtr out_msg;
+    cv::Mat mono8_img;
+    cv::Mat bgr_img;//(cv::Size(msg->height, msg->width), CV_8UC3);
 
     if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
+      std::cout << "converting 16UC1..." << std::endl;
       try
       {
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_16UC1);
@@ -314,7 +321,31 @@ public:
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
       }
+      cv::Mat_<uint16_t> input_image = cv_ptr->image;
+      findMinMax(input_image);
+      if (is_adaptive_) {
+        convertTo8bit(input_image, mono8_img, true, false);
+      } else {
+        convertIr(input_image, mono8_img);
+      }
+      out_msg = cv_bridge::CvImage(msg->header, "mono8", mono8_img).toImageMsg();
+    } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_8UC1) {
+      std::cout << "converting 8UC1..." << std::endl;
+      try
+      {
+        cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC1);
+      }
+      catch (cv_bridge::Exception& e)
+      {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+      }
+      cv::Mat_<uint8_t> input_image = cv_ptr->image;
+      cv::Mat_<uint8_t> scaled_input;
+      cv::resize(input_image, scaled_input, cv::Size(640, 480));
+      out_msg = cv_bridge::CvImage(msg->header, "mono8", scaled_input).toImageMsg();
     } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
+      std::cout << "converting 32FC1..." << std::endl;
       try
       {
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1);
@@ -324,23 +355,44 @@ public:
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
       }
-    } else {
-      ROS_ERROR("Only conversion from 16UC1 and 32FC1 are supported at the moment.");
-      exit(1);
-    }
-
-    // Convert to mono8
-    cv::Mat mono8_img;
-    if (msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1) {
-      std::cout << "converting 16UC1..." << std::endl;
-      cv::Mat_<uint16_t> input_image = cv_ptr->image;
-      findMinMax(input_image);
-      convertTo8bit(input_image, mono8_img, true, false);
-    } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1) {
-      std::cout << "converting 32FC1..." << std::endl;
       cv::Mat_<float> input_image = cv_ptr->image;
       findMinMax(input_image);
-      convertTo8bit(input_image, mono8_img, true, false);
+      if (is_adaptive_) {
+        convertTo8bit(input_image, mono8_img, true, false);
+      } else {
+        convertIr(input_image, mono8_img);
+      }
+      out_msg = cv_bridge::CvImage(msg->header, "mono8", mono8_img).toImageMsg();
+    } else if (msg->encoding == sensor_msgs::image_encodings::TYPE_32FC3) {
+      std::cout << "converting 32FC3..." << std::endl;
+      try
+      {
+        cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC3);
+      }
+      catch (cv_bridge::Exception& e)
+      {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+      }
+      cv::Mat input_image = cv_ptr->image;
+      cv::Mat_<float> bgr_channels[3];
+      cv::split(input_image, bgr_channels);
+      findMinMax(bgr_channels[0]);
+      cv::Mat bgr_channels_uint[3];
+      if (is_adaptive_) {
+        convertTo8bit(bgr_channels[0], bgr_channels_uint[0], true, false);
+        convertTo8bit(bgr_channels[1], bgr_channels_uint[1], true, false);
+        convertTo8bit(bgr_channels[2], bgr_channels_uint[2], true, false);
+      } else {
+        convertIr(bgr_channels[0], bgr_channels_uint[0]);
+        convertIr(bgr_channels[1], bgr_channels_uint[1]);
+        convertIr(bgr_channels[2], bgr_channels_uint[2]);
+      }
+      cv::merge(bgr_channels_uint, 3, bgr_img);
+      out_msg = cv_bridge::CvImage(msg->header, "bgr8", bgr_img).toImageMsg();
+    } else {
+      ROS_ERROR("Only conversion from 16UC1, 32FC1 and 32FC3 are supported at the moment.");
+      exit(1);
     }
 //    findMinMax(input_image);
     //ROS_INFO("%d %d\n", minIr_, maxIr_); 
@@ -350,20 +402,18 @@ public:
     // std::cout << "size: " << mono8_img.rows << ", " << mono8_img.cols << std::endl;
     
     // Output modified video stream
-    sensor_msgs::ImagePtr out_msg;
-    out_msg = cv_bridge::CvImage(msg->header, "mono8", mono8_img).toImageMsg();
     image_pub_.publish(out_msg);
   }
 };
 
 int main(int argc, char** argv)
 {
-  if (argc != 3) {
-    ROS_ERROR("Proper Usage: rosrun image_converter converter <input_topic> <output_topic>");
+  if (argc != 4) {
+    ROS_ERROR("Proper Usage: rosrun image_converter converter <input_topic> <output_topic> <adaptive?>");
   }
   ros::init(argc, argv, "image_converter");
   ROS_INFO("Converting and Publishing...");
-  ImageConverter ic(argv[1], argv[2]);
+  ImageConverter ic(argv[1], argv[2], (std::strcmp(argv[3], "adaptive") == 0) ? true : false);
   ros::spin();
   return 0;
 }
