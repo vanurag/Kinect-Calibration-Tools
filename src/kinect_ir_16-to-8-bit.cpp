@@ -27,8 +27,8 @@ class ImageConverter
   float minIr_, maxIr_;
   bool is_adaptive_;
   std::vector<std::pair<double, double>> last_mean_std_8bit;
-  double lower_scaling_factor = 0.99; 
-  double upper_scaling_factor = 0.99;
+  double lower_scaling_factor = 0.9; 
+  double upper_scaling_factor = 0.9;
   cv::Ptr<cv::CLAHE> clahe_;
 
   void findMinMax(const cv::Mat_<uint16_t> &ir)
@@ -92,7 +92,7 @@ class ImageConverter
   void convertTo8bit(const cv::Mat_<uint16_t>& image, cv::Mat& image_8bit,
                      bool update_mean_std, bool power_to_kelvin) {
 
-    int number_of_last_frames = 2;
+    int number_of_last_frames = 50;
 
     image_8bit.create(image.rows, image.cols, CV_8UC1);
     unsigned char* image_8bit_pointer = (unsigned char*)(image_8bit.data);
@@ -146,8 +146,8 @@ class ImageConverter
     upper_scaling_limit = std::min(upper_scaling_limit, static_cast<double>(pow(2, 16)-1));
     lower_scaling_limit = std::max(lower_scaling_limit, 0.0);
 
-    //ROS_INFO("16-bit to 8-bit conversion: Scaling pixel values from [ %f - %f] -> [ 0 - 255 ]", 
-    //          lower_scaling_limit, upper_scaling_limit);  
+    ROS_INFO("16-bit to 8-bit conversion: Scaling pixel values from [ %f - %f] -> [ 0 - 255 ]", 
+              lower_scaling_limit, upper_scaling_limit);  
     for (int j = 0; j < kelvin.rows; ++j) {
       for (int i = 0; i < kelvin.cols; ++i) {
         double temp = kelvin_pointer[kelvin.cols*j + i];
@@ -172,7 +172,7 @@ class ImageConverter
   void convertTo8bit(const cv::Mat_<float>& image, cv::Mat& image_8bit,
                      bool update_mean_std, bool power_to_kelvin) {
 
-    int number_of_last_frames = 2;
+    int number_of_last_frames = 50;
 
     image_8bit.create(image.rows, image.cols, CV_8UC1);
     unsigned char* image_8bit_pointer = (unsigned char*)(image_8bit.data);
@@ -223,8 +223,8 @@ class ImageConverter
     upper_scaling_limit = std::min(upper_scaling_limit, static_cast<double>(pow(2, 16)-1));
     lower_scaling_limit = std::max(lower_scaling_limit, 0.0);
 
-    //ROS_INFO("16-bit to 8-bit conversion: Scaling pixel values from [ %f - %f] -> [ 0 - 255 ]",
-    //          lower_scaling_limit, upper_scaling_limit);
+    ROS_INFO("16-bit to 8-bit conversion: Scaling pixel values from [ %f - %f] -> [ 0 - 255 ]",
+              lower_scaling_limit, upper_scaling_limit);
     for (int j = 0; j < kelvin.rows; ++j) {
       for (int i = 0; i < kelvin.cols; ++i) {
         double temp = kelvin_pointer[kelvin.cols*j + i];
