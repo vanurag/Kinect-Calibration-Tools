@@ -20,7 +20,6 @@ void depthToCV8UC1(const cv::Mat& in_img, cv::Mat& mono8_img) {
 
 class ImageConverter
 {
-  ros::NodeHandle nh_;
   image_transport::ImageTransport it_;
   image_transport::Subscriber image_sub_;
   image_transport::Publisher image_pub_;
@@ -285,8 +284,8 @@ class ImageConverter
   }
     
 public:
-  ImageConverter(std::string input, std::string output, bool is_adaptive)
-    : it_(nh_), minIr_(0), maxIr_((float)0x7FFF)
+  ImageConverter(ros::NodeHandle nh, std::string input, std::string output, bool is_adaptive)
+    : it_(nh), minIr_(0), maxIr_((float)0x7FFF)
   {
     // Subscrive to input video feed and publish output video feed
     image_sub_ = it_.subscribe(input, 1, 
@@ -408,12 +407,21 @@ public:
 
 int main(int argc, char** argv)
 {
-  if (argc != 4) {
-    ROS_ERROR("Proper Usage: rosrun image_converter converter <input_topic> <output_topic> <adaptive?>");
-  }
+  ros::Time::init();
   ros::init(argc, argv, "image_converter");
+  ros::NodeHandle nh("~");
+
+  bool adaptive = false;
+  std::string inputTopic, outputTopic;
+  nh.getParam("input_topic", inputTopic);
+  nh.getParam("output_topic", outputTopic);
+  nh.getParam("adaptive", adaptive);
+
   ROS_INFO("Converting and Publishing...");
-  ImageConverter ic(argv[1], argv[2], (std::strcmp(argv[3], "adaptive") == 0) ? true : false);
+  ROS_INFO("Using INPUT topic: %s", inputTopic.c_str());
+  ROS_INFO("Using OUTPUT topic: %s", outputTopic.c_str());
+  ROS_INFO("is adaptive?: %d", adaptive);
+  ImageConverter ic(nh, inputTopic, outputTopic, adaptive);
   ros::spin();
   return 0;
 }
